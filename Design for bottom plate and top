@@ -1,0 +1,208 @@
+import pandas as pd
+import math
+
+# Define the functions (unchanged)...
+def equivalent_thick(T_bottom, T2, Tbp, T12):
+    if T2 <= 12:
+        raise ValueError("T2 must be greater than 12")
+    tb = T2 + 0.6 * (T_bottom - T2) + T12 + Tbp
+    return tb
+
+def calculation_lever_arm(wr, h1, Tt):
+    hf2 = wr / 2 + h1 + 5 + Tt / 2
+    return hf2
+
+def short_term_modulus_elasticity(fck):
+    Ec = 5000 * math.sqrt(fck)
+    return Ec
+
+def deformation_bottom(L_bottom, W_b):
+    ab = min(L_bottom, W_b)
+    db = 1.13 * ab
+    return db, ab
+
+def total_stress_parameter(L, L0, NG, db, NQ, tb, Ec):
+    if None in [L, L0, NG, db, NQ, tb, Ec]:
+        raise ValueError(f"One or more inputs to total_stress_parameter are None: L={L}, L0={L0}, NG={NG}, db={db}, NQ={NQ}, tb={tb}, Ec={Ec}")
+    kc = 1.1 if db > 2 * L0 else 1.1 + (1.7 - 0.85 * db / L) * (2 - db / L0)
+    H7 = 2.5 + L / 1000
+    αc = NQ / Ec + 3 * NG / Ec
+    kb = 0.03 + 0.55 * db / L
+    αb = (L / (L + 2 * tb)) ** 2 * (3 * L0 / db) ** 0.4
+    return kc, αc, kb, αb, H7
+
+def actual_deformation(kc, αc, kb, αb, L, H7, V_max_SLS):
+    delta_W_act = 0.55 * (kc * αc * kb * αb) / L
+    fk_RSL = V_max_SLS * 4 / (math.pi * L ** 2)
+    delta_W_perms = H7 * (0.45 - 1.708 * ((fk_RSL - 45) / 78.5) * math.sqrt(H7 / L))
+    return delta_W_act, delta_W_perms, fk_RSL
+
+def calculate_bottom_thickness(T2, wr, Vx, lr, D4, R2, H7):
+    theta_raw = D4 / (2 * (R2 + 4))
+    theta = min(max(theta_raw, 0), math.pi / 6)
+    term1 = (R2 + 8) * (1 - math.cos(theta))
+    term2 = (8 - H7) * math.cos(theta)
+    h1 = term1 + term2
+    first_term = T2 + 8 + h1
+    second_term = 5 + wr + 5 + (Vx * 2 + lr + 40) * 0.0125
+    T_bottom = max(first_term, second_term)
+    T2 = T_bottom - h1
+    return T_bottom, T2
+
+def Calculation_bottom_width(H_max_ULS, T_bottom, wr):
+    W_b = (H_max_ULS * (T_bottom - 5 - wr * 0.5)) / (V_max_ULS * 6)
+    return W_b
+
+def calculation_dispersed_dia(D4, T2, La, Wa, Tbp):
+    fixed_angle = math.radians(60)
+    dispersed_increment = 2 * T2 * math.tan(fixed_angle) + 2 * Tbp
+    D_dis_b = D4 + dispersed_increment
+    D_dis_b = min(D_dis_b, La, Wa)
+    Area_Aco = math.pi * (D_dis_b ** 2) * 0.25
+    Acceptable_area = min(Area_Aco, La * Wa)
+    return D_dis_b, Area_Aco, Acceptable_area
+
+def calculation_of_allowable_compressive_force(Acr_1, Length_pd, Width_pd, fcd):
+    Acr_av = Length_pd * Width_pd
+    Fr_du = Acr_1 * fcd / 1000 * min(math.sqrt(Acr_av / Acr_1), 3)
+    return Acr_av, Fr_du
+
+def effective_length(hf2, Tt, Lt, lr):
+    L_eff = max(min((lr + (hf2 + 0.5 * Tt) * 2), Lt), (lr + 20))
+    return L_eff
+
+def calculate_stress(H_max_ULS, hf2, Tt, L_eff):
+    sigma_b = (H_max_ULS * (hf2 + Tt) * 1000 * 4) / (Tt ** 2 * L_eff)
+    sigma_n = H_max_ULS * 1000 / (L_eff * Tt)
+    sigma_t = sigma_b + sigma_n
+    return sigma_t
+
+# Read the Excel input file
+import pandas as pd
+import math
+
+# Read the Excel input file
+file_path = r"C:\Users\Vikash Raj\Desktop\python practice\Callote\input_data.xlsx"
+df_sheet1 = pd.read_excel(file_path, sheet_name='Input_data')
+df_sheet1.columns = df_sheet1.columns.str.strip()
+
+# Display available 'Parameter' values for debugging
+print("Available 'Parameter' values:", df_sheet1['Parameter'].unique())
+
+# Helper function to fetch parameter values safely
+def get_param_value(param_name, df):
+    try:
+        # Check for exact match first
+        mask = df['Parameter'].str.strip() == param_name
+        if mask.any():
+            value = df.loc[mask, 'Value'].iloc[0]
+            print(f"Parameter '{param_name}' found with value: {value}")
+            return value
+        else:
+            # Check for potential spelling differences or spaces
+            print(f"Parameter '{param_name}' not found. Checking for similar entries...")
+            similar_entries = df['Parameter'].str.strip().str.lower() == param_name.lower()
+            if similar_entries.any():
+                found_param = df.loc[similar_entries, 'Parameter'].iloc[0]
+                value = df.loc[similar_entries, 'Value'].iloc[0]
+                print(f"Found a similar parameter '{found_param}' with value: {value}")
+                return value
+            else:
+                print(f"Parameter '{param_name}' not found even after checking for similar entries.")
+                return None
+    except Exception as e:
+        print(f"Error fetching parameter '{param_name}': {e}")
+        return None
+
+# Fetch parameters
+NQ = get_param_value('NQ', df_sheet1)
+
+if NQ is None:
+    print("Parameter 'NQ' is still missing after additional checks. Please verify the Excel file.")
+else:
+    print(f"Parameter 'NQ' found with value: {NQ}")
+
+
+# Fetch parameters from Excel
+L0 = 300  # Set a default value for L0
+D4 = get_param_value('D4', df_sheet1)
+fck = get_param_value('fck', df_sheet1)
+L = get_param_value('L', df_sheet1)
+V_max_ULS = get_param_value('V_max_ULS', df_sheet1)
+R2 = get_param_value('R2', df_sheet1)
+NG = get_param_value('NG', df_sheet1)
+# NQ = get_param_value('NQ', df_sheet1)
+La = get_param_value('La', df_sheet1)
+Wa = get_param_value('Wa', df_sheet1)
+T_bottom = get_param_value('T_bottom', df_sheet1)
+h1 = get_param_value('h1', df_sheet1)
+Tbp = get_param_value('Tbp', df_sheet1)
+T12 = get_param_value('T12', df_sheet1)
+
+# Check if critical parameters are missing
+if None in [D4, fck, L, V_max_ULS, R2, NG, NQ, La, Wa, T_bottom, h1, Tbp, T12]:
+    print("One or more critical parameters are missing. Please check the input data.")
+    exit()
+
+# Calculate T2
+T2 = T_bottom - h1
+print(f"Calculated T2: {T2}")
+
+# Calculate tb using equivalent_thick function
+try:
+    tb = equivalent_thick(T_bottom, T2, Tbp, T12)
+    print(f"Calculated equivalent thickness (tb): {tb}")
+except Exception as e:
+    print(f"Error in equivalent thickness calculation: {e}")
+
+# Example usage of T2 in calculations
+try:
+    # Check for any None values before calculations
+    if None in [D4, T2, La, Wa, Tbp]:
+        raise ValueError(f"One or more inputs for dispersed diameter calculation are None: D4={D4}, T2={T2}, La={La}, Wa={Wa}, Tbp={Tbp}")
+    D_dis_b, Area_Aco, Acceptable_area = calculation_dispersed_dia(D4, T2, La, Wa, Tbp)
+    print(f"D_dis_b: {D_dis_b}, Area_Aco: {Area_Aco}, Acceptable_area: {Acceptable_area}")
+except Exception as e:
+    print(f"Error in dispersed diameter calculation: {e}")
+
+# Iterating through ranges of lr, wr, T_bottom, and W_b
+results_list = []
+for lr in range(150, 2000, 50):
+    for wr in range(180, 1500, 50):
+        L_bottom = lr + 20
+        for T_bottom in range(30, 220, 20):
+            for W_b in range(D4 + 30, 2000, 50):
+                try:
+                    # Calculate intermediate variables
+                    T2 = T_bottom - h1
+                    tb = equivalent_thick(T_bottom, T2, Tbp, T12)
+                    db, ab = deformation_bottom(L_bottom, W_b)
+                    Ec = short_term_modulus_elasticity(fck)
+
+                    # Ensure no variables are None before calculations
+                    if None in [L, L0, NG, db, NQ, tb, Ec]:
+                        raise ValueError(f"One or more inputs for total_stress_parameter are None: L={L}, L0={L0}, NG={NG}, db={db}, NQ={NQ}, tb={tb}, Ec={Ec}")
+
+                    kc, αc, kb, αb, H7 = total_stress_parameter(L, L0, NG, db, NQ, tb, Ec)
+
+                    # Store results
+                    results_list.append({
+                        'lr': lr,
+                        'wr': wr,
+                        'L_bottom': L_bottom,
+                        'T_bottom': T_bottom,
+                        'W_b': W_b,
+                        'kc': kc,
+                        'αc': αc,
+                        'kb': kb,
+                        'αb': αb,
+                        'H7': H7
+                    })
+                except Exception as e:
+                    print(f"Error in calculation for lr={lr}, wr={wr}, T_bottom={T_bottom}, W_b={W_b}: {e}")
+
+# Export results to Excel
+df_result = pd.DataFrame(results_list)
+output_file_path = r"C:\Users\Vikash Raj\Desktop\python practice\Callote\input_data_result.xlsx"
+df_result.to_excel(output_file_path, index=False)
+print(f"Results exported to: {output_file_path}")
